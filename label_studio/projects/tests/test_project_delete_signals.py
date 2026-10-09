@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
+from typing import Any, NoReturn
 from unittest.mock import patch
 
 from django.db import close_old_connections
@@ -9,6 +10,7 @@ from django.db.models import signals
 from organizations.tests.factories import OrganizationFactory
 from projects.models import Project
 from projects.tests.factories import ProjectFactory
+from rest_framework.response import Response
 from rest_framework.test import APIClient, APITestCase, APITransactionTestCase
 from tasks.models import Task
 from tasks.tests.factories import AnnotationDraftFactory, PredictionFactory, TaskFactory
@@ -18,19 +20,19 @@ RESULT = [{'from_name': 'label', 'to_name': 'text', 'type': 'choices', 'value': 
 
 
 class ProjectDeletionAnnotationTests(APITestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.organization = OrganizationFactory()
         self.user = self.organization.created_by
         self.client.force_authenticate(self.user)
         self.project = ProjectFactory(organization=self.organization, created_by=self.user, label_config=LABEL_CONFIG)
         self.task = TaskFactory(project=self.project, data={'text': 'signal regression'})
 
-    def test_annotation_created_during_other_project_deletion_updates_counters(self):
+    def test_annotation_created_during_other_project_deletion_updates_counters(self) -> None:
         deleting_project = ProjectFactory(organization=self.organization, created_by=self.user)
         original_delete = Project.delete
         responses = []
 
-        def delete_with_annotation(instance, *args, **kwargs):
+        def delete_with_annotation(instance: Project, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
             # Interleave a real annotation request at the deletion call boundary.
             responses.append(self.client.post(f'/api/tasks/{self.task.id}/annotations', {'result': RESULT}, format='json'))
             return original_delete(instance, *args, **kwargs)
@@ -46,7 +48,7 @@ class ProjectDeletionAnnotationTests(APITestCase):
         project = self.client.get(f'/api/projects/{self.project.id}').json()
         self.assertEqual(project['finished_task_number'], 1)
 
-    def test_update_recovers_previously_incorrect_task_statistics(self):
+    def test_update_recovers_previously_incorrect_task_statistics(self) -> None:
         annotation = self.client.post(f'/api/tasks/{self.task.id}/annotations', {'result': RESULT}, format='json')
         self.assertEqual(annotation.status_code, 201, annotation.content)
         # Arrange the historical persisted state observed in production.
@@ -62,14 +64,14 @@ class ProjectDeletionAnnotationTests(APITestCase):
         self.assertTrue(task['is_labeled'])
         self.assertEqual(self.client.get(f'/api/projects/{self.project.id}').json()['finished_task_number'], 1)
 
-    def test_annotation_update_during_failed_other_project_deletion_keeps_signals_working(self):
+    def test_annotation_update_during_failed_other_project_deletion_keeps_signals_working(self) -> None:
         annotation = self.client.post(f'/api/tasks/{self.task.id}/annotations', {'result': RESULT}, format='json')
         self.assertEqual(annotation.status_code, 201)
         Task.objects.filter(pk=self.task.id).update(total_annotations=0, is_labeled=False)
         deleting_project = ProjectFactory(organization=self.organization, created_by=self.user)
         updates = []
 
-        def failing_delete(instance, *args, **kwargs):
+        def failing_delete(instance: Project, *args: Any, **kwargs: Any) -> NoReturn:
             updates.append(self.client.patch(f'/api/annotations/{annotation.json()["id"]}',
                                              {'result': RESULT}, format='json'))
             raise RuntimeError('simulated deletion failure')
@@ -88,7 +90,7 @@ class ProjectDeletionAnnotationTests(APITestCase):
         self.assertEqual(created.status_code, 201)
         self.assertEqual(self.client.get(f'/api/projects/{self.project.id}').json()['finished_task_number'], 2)
 
-    def test_delete_cascades_tasks_annotations_predictions_and_drafts(self):
+    def test_delete_cascades_tasks_annotations_predictions_and_drafts(self) -> None:
         annotation = self.client.post(f'/api/tasks/{self.task.id}/annotations', {'result': RESULT}, format='json')
         self.assertEqual(annotation.status_code, 201)
         prediction = PredictionFactory(task=self.task, project=self.project, result=RESULT)
@@ -105,7 +107,7 @@ class ProjectDeletionAnnotationTests(APITestCase):
 
 
 class ConcurrentProjectDeletionTests(APITransactionTestCase):
-    def test_non_lifo_deletions_leave_subsequent_annotation_writes_working(self):
+    def test_non_lifo_deletions_leave_subsequent_annotation_writes_working(self) -> None:
         organization = OrganizationFactory()
         user = organization.created_by
         projects = [ProjectFactory(organization=organization, created_by=user) for _ in range(2)]
@@ -119,13 +121,13 @@ class ConcurrentProjectDeletionTests(APITransactionTestCase):
                          signals.pre_delete, signals.post_delete, signals.pre_migrate, signals.post_migrate]
         registrations = [(signal, list(signal.receivers)) for signal in model_signals]
 
-        def paused_delete(instance, *args, **kwargs):
+        def paused_delete(instance: Project, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
             entered[instance.pk].set()
             if not release[instance.pk].wait(15):
                 raise TimeoutError('deletion interleaving was not released')
             return original_delete(instance, *args, **kwargs)
 
-        def delete_project(project_id):
+        def delete_project(project_id: int) -> Response:
             close_old_connections()
             try:
                 client = APIClient()
