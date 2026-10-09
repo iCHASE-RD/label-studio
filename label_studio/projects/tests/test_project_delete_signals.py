@@ -15,7 +15,9 @@ from rest_framework.test import APIClient, APITestCase, APITransactionTestCase
 from tasks.models import Task
 from tasks.tests.factories import AnnotationDraftFactory, PredictionFactory, TaskFactory
 
-LABEL_CONFIG = '<View><Text name="text" value="$text"/><Choices name="label" toName="text"><Choice value="yes"/></Choices></View>'
+LABEL_CONFIG = (
+    '<View><Text name="text" value="$text"/><Choices name="label" toName="text"><Choice value="yes"/></Choices></View>'
+)
 RESULT = [{'from_name': 'label', 'to_name': 'text', 'type': 'choices', 'value': {'choices': ['yes']}}]
 
 
@@ -34,7 +36,9 @@ class ProjectDeletionAnnotationTests(APITestCase):
 
         def delete_with_annotation(instance: Project, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
             # Interleave a real annotation request at the deletion call boundary.
-            responses.append(self.client.post(f'/api/tasks/{self.task.id}/annotations', {'result': RESULT}, format='json'))
+            responses.append(
+                self.client.post(f'/api/tasks/{self.task.id}/annotations', {'result': RESULT}, format='json')
+            )
             return original_delete(instance, *args, **kwargs)
 
         with patch.object(Project, 'delete', delete_with_annotation):
@@ -72,8 +76,9 @@ class ProjectDeletionAnnotationTests(APITestCase):
         updates = []
 
         def failing_delete(instance: Project, *args: Any, **kwargs: Any) -> NoReturn:
-            updates.append(self.client.patch(f'/api/annotations/{annotation.json()["id"]}',
-                                             {'result': RESULT}, format='json'))
+            updates.append(
+                self.client.patch(f'/api/annotations/{annotation.json()["id"]}', {'result': RESULT}, format='json')
+            )
             raise RuntimeError('simulated deletion failure')
 
         with patch.object(Project, 'delete', failing_delete):
@@ -117,8 +122,16 @@ class ConcurrentProjectDeletionTests(APITransactionTestCase):
         release = {project.pk: Event() for project in projects}
         original_delete = Project.delete
         # Restore registrations after the test even when run against the broken baseline.
-        model_signals = [signals.pre_init, signals.post_init, signals.pre_save, signals.post_save,
-                         signals.pre_delete, signals.post_delete, signals.pre_migrate, signals.post_migrate]
+        model_signals = [
+            signals.pre_init,
+            signals.post_init,
+            signals.pre_save,
+            signals.post_save,
+            signals.pre_delete,
+            signals.post_delete,
+            signals.pre_migrate,
+            signals.post_migrate,
+        ]
         registrations = [(signal, list(signal.receivers)) for signal in model_signals]
 
         def paused_delete(instance: Project, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
